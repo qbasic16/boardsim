@@ -1,21 +1,12 @@
 #include <err.h>
-#include <vpi_user.h>
+#include "include/mti.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_image.h>
 
 //////// BOARD I/O DECLARATIONS ////////
 
-#define lin_scale(start, stop, count, idx) (((stop)-(start))*(idx)/((count)-1)+(start))
+#include "buttons.h"
 
-#define UP   (1)
-#define DOWN (0)
-struct board_button {
-	SDL_Keycode sym;
-	int vecidx;
-	int x;
-	int y;
-	int state;
-};
 
 #define ON   (1)
 #define OFF  (0)
@@ -32,16 +23,6 @@ struct board_led {
 	int y;
 	int state;
 };
-
-struct board_button buttons[] = {
-#define btn_x(idx) lin_scale(624, 791, 4, idx)
-	{SDLK_q, 3, btn_x(0), 606, UP},
-	{SDLK_w, 2, btn_x(1), 606, UP},
-	{SDLK_e, 1, btn_x(2), 606, UP},
-	{SDLK_r, 0, btn_x(3), 606, UP},
-#undef btn_x
-};
-#define N_BTN (sizeof(buttons) / sizeof(buttons[0]))
 
 struct board_switch switches[] = {
 #define sw_x(idx) lin_scale(84, 567, 18, idx)
@@ -90,6 +71,67 @@ struct board_led red_leds[] = {
 #undef led_x
 };
 #define N_LED (sizeof(red_leds) / sizeof(red_leds[0]))
+
+//////// Typedefs & structs ////////
+
+typedef struct {
+	mtiProcessIdT procid;
+	mtiSignalIdT buttons;
+	mtiSignalIdT switches;
+	mtiSignalIdT leds;
+} instanceInfoT;
+
+//////// FLP ////////
+
+void checkValues( void * param )
+{
+	double real_val;
+	instanceInfoT * inst = (instanceInfoT*)param;
+
+	mti_PrintFormatted( "Time [%d,%d] delta %d:\n",
+		mti_NowUpper(),
+		mti_Now(),
+		mti_Delta()
+	);
+	// mti_PrintFormatted( " %s = %d\n",
+	// 	mti_GetSignalName( inst->bitsig ),
+	// 	mti_GetSignalValue( inst->bitsig )
+	// );
+	// mti_PrintFormatted( " %s = %d\n",
+	// 	mti_GetSignalName( inst->intsig ),
+	// 	mti_GetSignalValue( inst->intsig )
+	// );
+	// (void) mti_GetSignalValueIndirect( inst->realsig, &real_val );
+	// mti_PrintFormatted( " %s = %g\n",
+	// 	mti_GetSignalName( inst->realsig ),
+	// 	real_val
+	// );
+	mti_ScheduleWakeup( inst->procid, 5 );
+}
+
+void cleanupCallback( void * param )
+{
+	mti_PrintMessage( "Cleaning up...\n" );
+	free( param );
+}
+
+void app_init(
+	mtiRegionIdT region,
+	char* param,
+	mtiInterfaceListT *generics,
+	mtiInterfaceListT *ports
+) {
+	instanceInfoT* inst = (instanceInfoT*)malloc( sizeof(instanceInfoT) );
+	inst->switches = mti_FindPort( ports, "switches" );
+	inst->buttons = mti_FindPort( ports, "buttons" );
+	inst->leds = mti_FindPort( ports, "leds" );
+
+	inst->procid = mti_CreateProcess( "ValueChecker", checkValues, inst );
+
+	mti_AddQuitCB( cleanupCallback, inst );
+	mti_AddRestartCB( cleanupCallback, inst );
+}
+
 
 //////// LEDS ////////
 
@@ -217,53 +259,6 @@ DE2_switches_register(void)
 	vpi_register_systf(&tf_data);
 }
 
-//////// BUTTONS ////////
-
-PLI_INT32
-DE2_buttons_calltf(PLI_BYTE8 *user_data)
-{
-	vpiHandle systf;
-	s_vpi_value val;
-	s_vpi_vecval vec0;
-
-	systf = vpi_handle(vpiSysTfCall, NULL);
-
-	val.format = vpiVectorVal;
-	val.value.vector = &vec0;
-	vec0.aval = 0;
-	vec0.bval = 0;
-
-	size_t i;
-	for (i = 0; i < N_BTN; i++)
-		if (buttons[i].state)
-			vec0.aval |= (1 << (N_BTN - 1)) >> i;
-
-	vpi_put_value(systf, &val, NULL, vpiNoDelay);
-
-	return 0;
-}
-
-PLI_INT32
-DE2_buttons_sizetf(PLI_BYTE8 *user_data)
-{
-	return (N_BTN);
-}
-
-void
-DE2_buttons_register(void)
-{
-	s_vpi_systf_data tf_data;
-
-	tf_data.type = vpiSysFunc;
-	tf_data.sysfunctype = vpiSizedFunc;
-	tf_data.tfname = "$DE2_buttons";
-	tf_data.calltf = DE2_buttons_calltf;
-	tf_data.compiletf = NULL;
-	tf_data.sizetf = DE2_buttons_sizetf;
-	tf_data.user_data = NULL;
-
-	vpi_register_systf(&tf_data);
-}
 
 //////// GUI ////////
 
